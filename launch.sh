@@ -3,6 +3,8 @@ set -Eeuo pipefail
 
 GAME_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 GAME_EXE="$GAME_DIR/FA.EXE"
+JOYSTICK_DLL="$GAME_DIR/FAJoystick.dll"
+JOYSTICK_SOURCE="$GAME_DIR/joystick/FAJoystick.c"
 WINEPREFIX="$GAME_DIR/.wine-prefix"
 
 fail() {
@@ -22,6 +24,11 @@ fi
 
 if [[ ! -f "$GAME_DIR/FA.SMS" ]]; then
     fail "Required game data file 'FA.SMS' is missing from $GAME_DIR. The executable may report a misleading 'Not enough memory' error without it."
+fi
+
+if [[ ! -f "$JOYSTICK_DLL" || "$JOYSTICK_SOURCE" -nt "$JOYSTICK_DLL" ]]; then
+    printf 'Building the per-game joystick adapter...\n'
+    "$GAME_DIR/build-joystick-adapter.sh"
 fi
 
 for dependency in WAIL32.DLL CDRVDL32.DLL CDRVHF32.DLL msapi.dll; do

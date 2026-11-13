@@ -12,21 +12,29 @@ makes the commands easier to follow.
 - Your Fighters Anthology CD-ROM and a working CD/DVD drive
 - Wine that can run 32-bit Windows programs
 - Python 3
+- The 32-bit MinGW-w64 compiler (`i686-w64-mingw32-gcc`) to build the
+  per-game joystick adapter
 - About 150 MB of free space for the game's Digital install, plus room for
   saved missions and pilots
 
-Install Wine and Python 3 from your Linux distribution's Software app or
-package manager. The exact package names and steps vary by distribution. If
-you need help installing Wine, follow the official Wine instructions for your
-distribution at [WineHQ's download guide](https://wiki.winehq.org/Download).
-Do not run Wine or the game as `root` or with `sudo`.
+Install Wine, Python 3, and the 32-bit MinGW-w64 compiler from your Linux
+distribution's Software app or package manager. Package names vary by
+distribution; the compiler package must provide
+`i686-w64-mingw32-gcc`. If you need help installing Wine, follow the official
+Wine instructions for your distribution at
+[WineHQ's download guide](https://wiki.winehq.org/Download). Do not run Wine
+or the game as `root` or with `sudo`.
 
 ## 1. Prepare the game folder
 
 1. Open your Home folder in the file manager.
 2. Create a folder named `Games`, then a folder inside it named `FA`.
    The full location should be `~/Games/FA`.
-3. Copy `launch.sh` and `patch-fa.py` from this package into `~/Games/FA`.
+3. Copy the compatibility files from this package into `~/Games/FA`,
+   preserving the `joystick/` subfolder. This includes `launch.sh`,
+   `patch-fa.py`, `build-joystick-adapter.sh`, `configure-joystick.sh`,
+   `configure-joystick.py`, `FA-JOYSTICK.INI`, `JOYSTICK.md`, and
+   `joystick/FAJoystick.c`.
 
 The launcher treats the folder containing itself as the game folder. The
 installer must put the game files in this same `~/Games/FA` folder.
@@ -89,14 +97,31 @@ Open a Terminal in `~/Games/FA` and run:
 ./launch.sh
 ```
 
-On first launch, the patcher verifies `FA.EXE` and applies the Wine
-compatibility, focus-loss recovery, and HD display patches. The game will have
-1280x720 and 1920x1080 choices under **Preferences > Screen resolution**;
-640x480 remains available. The patcher also fixes rendering at the HD
-resolutions. It saves `FA.EXE.orig` if that backup does not already exist and
-refuses to modify an unrecognized executable. The launcher then creates or
-updates the local `.wine-prefix` and starts the game. Leave the Terminal open
-while Wine starts. Keep the CD in the drive if the game asks for it.
+On first launch, the script builds the 32-bit `FAJoystick.dll` adapter if
+needed. The patcher verifies `FA.EXE`, adds the adapter import, and applies the
+Wine compatibility, focus-loss recovery, and HD display patches. The game
+will have 1280x720 and 1920x1080 choices under **Preferences > Screen
+resolution**; 640x480 remains available. The patcher also fixes rendering at
+the HD resolutions. It saves `FA.EXE.orig` if that backup does not already
+exist and refuses to modify an unrecognized executable. The launcher then
+creates or updates the local `.wine-prefix` and starts the game. Leave the
+Terminal open while Wine starts. Keep the CD in the drive if the game asks
+for it.
+
+### Configure joystick mappings
+
+The adapter applies mappings only to Fighters Anthology; it does not change
+Wine or other applications. By default it swaps the game's Z and R (Rx) axes.
+To identify your controller's physical axes and change axes, inversion, or
+button mappings, run:
+
+```sh
+./configure-joystick.sh
+```
+
+The script opens Wine's joystick properties and then prompts for the
+game-specific mappings. Close and restart the game after changing them.
+Details and mapping examples are in [JOYSTICK.md](./JOYSTICK.md).
 
 If Linux says **Permission denied**, run this once from `~/Games/FA`, then
 launch again:
@@ -120,6 +145,9 @@ chmod +x launch.sh
 - **Wine, wineboot, or Python is reported missing:** Install Wine (including
   `wineboot`) or Python 3 using your distribution's Software app or package
   manager, then try again.
+- **The joystick adapter cannot be built:** Install the 32-bit MinGW-w64
+  compiler that provides `i686-w64-mingw32-gcc`, then run `./launch.sh`
+  again.
 
 If you ask for help, include your Linux distribution, Wine version, and the
 exact error message. Do not post your CD key.
@@ -130,24 +158,28 @@ exact error message. Do not post your CD key.
 If you have already copied the installed Fighters Anthology files from both
 CDs to your machine, you can skip running the installer:
 
-1. Put `launch.sh` and `patch-fa.py` in the folder you want to use for the
-   game, such as `~/Games/FA`.
+1. Put all the compatibility files listed in step 1 in the folder you want to
+   use for the game, such as `~/Games/FA`, preserving the `joystick/`
+   subfolder.
 2. Copy the game files from both CDs into that same folder. Merge the files
    from the two discs; do not leave the game files only inside separate
    `CD1` and `CD2` subfolders. In particular, `FA.EXE`, `FA.SMS`,
    `WAIL32.DLL`, `CDRVDL32.DLL`, `CDRVHF32.DLL`, and `msapi.dll` must be
-   alongside `launch.sh`.
+   alongside `launch.sh`. The launcher builds `FAJoystick.dll` from
+   `joystick/FAJoystick.c` when needed.
 3. Open a Terminal in the game folder and start the game:
 
    ```sh
    ./launch.sh
    ```
 
-On the first launch, the script validates and patches `FA.EXE` for Wine,
-focus-loss recovery, and HD resolutions (keeping the original as
-`FA.EXE.orig`), creates the local `.wine-prefix`, and starts the game. If the
-game asks for the CD, insert it and make sure drive `D:` in this game's Wine
-configuration points to the mounted disc, as described above.
+On the first launch, the script builds the joystick adapter if needed and
+validates and patches `FA.EXE` for Wine, joystick remapping, focus-loss
+recovery, and HD resolutions (keeping the original as `FA.EXE.orig`), creates
+the local `.wine-prefix`, and starts the game. Configure mappings with
+`./configure-joystick.sh` as described above. If the game asks for the CD,
+insert it and make sure drive `D:` in this game's Wine configuration points
+to the mounted disc, as described above.
 
 This path assumes the copied files are already an installed game. If you
 only copied the raw disc contents and do not have the required files in the

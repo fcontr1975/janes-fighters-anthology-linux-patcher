@@ -50,6 +50,11 @@ this script) and it applies, in place and keeping a .orig backup:
    and if the game is still suspended it runs the game's own resume path
    (restore surfaces, redraw, resume threads) after the default handling.
 
+6. Per-game joystick remapping.  A new import descriptor loads
+   FAJoystick.dll beside FA.EXE, which intercepts FA's WinMM joystick calls
+   and applies the mappings in FA-JOYSTICK.INI.  Other WinMM imports are
+   untouched.
+
 Every original byte is verified before it is changed, and the result must
 match a known SHA-256 or nothing is written.  Running it again on a patched
 executable does nothing.
@@ -70,7 +75,9 @@ SECTION_ALIGNMENT = 0x1000
 
 RETAIL_SHA256 = "d1bc58d59be68bc538b9ebd9842e78797697824a4aa243449e56679d6d49cf7b"
 WINE_ONLY_SHA256 = "849a53223a847a460dfdb5fd6185c879efd79e38ece7500db88e1d6767dde30b"
-PATCHED_SHA256 = "fb3fb5b8099c980db7ece042626f855f80cfff6d618b4417bf50a83f5dfd0bf0"
+PATCHED_SHA256 = "a3f7fab9f7e7b1422eb33eded728de6e8762aa2840caf454509aeeb32e31d82b"
+JOYSTICK_DLL_NAME = b"FAJoystick.dll"
+JOYSTICK_IMPORT_NAME = b"FAJoystick_Initialize"
 
 # --- 1. Wine: timer routines that bracket critical sections with CLI/STI ---
 CLI_SITES = (
@@ -471,6 +478,119 @@ def build_focus_stub() -> bytes:
     return stub
 
 
+def import_descriptors(image: Image) -> tuple[list[bytes], list[tuple[bytes, int, int]]]:
+    directory_rva, directory_size = struct.unpack_from(
+        "<II", image.data, image.opt + 96 + 8)
+    if not directory_rva or directory_size < 20 or directory_size % 20:
+        raise PatchError("invalid PE import directory")
+
+    offset = image.rva_to_offset(directory_rva, directory_size)
+    descriptors: list[bytes] = []
+    imports: list[tuple[bytes, int, int]] = []
+    terminated = False
+    for cursor in range(offset, offset + directory_size, 20):
+        descriptor = bytes(image.data[cursor:cursor + 20])
+        original_thunk, _timestamp, _chain, name_rva, first_thunk = struct.unpack(
+            "<IIIII", descriptor)
+        if not any(descriptor):
+            terminated = True
+            break
+        if not name_rva or not first_thunk:
+            raise PatchError("invalid PE import descriptor")
+        name_offset = image.rva_to_offset(name_rva)
+        name_end = image.data.find(b"\0", name_offset)
+        if name_end < 0:
+            raise PatchError("unterminated PE import module name")
+        descriptors.append(descriptor)
+        imports.append((
+            bytes(image.data[name_offset:name_end]), original_thunk, first_thunk))
+
+    if not terminated:
+        raise PatchError("unterminated PE import descriptor table")
+    return descriptors, imports
+
+
+def verify_joystick_import(image: Image) -> None:
+    _descriptors, imports = import_descriptors(image)
+    winmm = next(
+        (item for item in imports if item[0].lower() == b"winmm.dll"),
+        None,
+    )
+    if winmm is None or not winmm[1]:
+        raise PatchError("the WinMM joystick imports are missing")
+    thunk_offset = image.rva_to_offset(winmm[1], 4)
+    winmm_names: set[bytes] = set()
+    for index in range(4096):
+        name_rva = image.u32(thunk_offset + index * 4)
+        if not name_rva:
+            break
+        if name_rva & 0x80000000:
+            continue
+        name_offset = image.rva_to_offset(name_rva, 3)
+        name_end = image.data.find(b"\0", name_offset + 2)
+        if name_end < 0:
+            raise PatchError("unterminated WinMM import name")
+        winmm_names.add(bytes(image.data[name_offset + 2:name_end]))
+    else:
+        raise PatchError("unterminated WinMM import thunk table")
+    if not {b"joyGetPos", b"joyGetPosEx", b"joyGetDevCapsA"} <= winmm_names:
+        raise PatchError("the WinMM joystick functions cannot be intercepted")
+
+    joystick = next(
+        (item for item in imports
+         if item[0].lower() == JOYSTICK_DLL_NAME.lower()),
+        None,
+    )
+    if joystick is None:
+        raise PatchError("the .fajoy section is missing its adapter import")
+    _module, original_thunk, first_thunk = joystick
+    if not original_thunk or not first_thunk:
+        raise PatchError("invalid joystick adapter import thunks")
+    thunk_offset = image.rva_to_offset(original_thunk, 8)
+    name_rva = image.u32(thunk_offset)
+    if not name_rva:
+        raise PatchError("missing joystick adapter initialization import")
+    import_name_offset = image.rva_to_offset(name_rva, 3)
+    name_end = image.data.find(b"\0", import_name_offset + 2)
+    if name_end < 0:
+        raise PatchError("unterminated joystick adapter import name")
+    import_name = bytes(image.data[import_name_offset + 2:name_end])
+    if import_name != JOYSTICK_IMPORT_NAME:
+        raise PatchError("unexpected joystick adapter import")
+
+
+def add_joystick_import(image: Image) -> None:
+    descriptors, _imports = import_descriptors(image)
+    rva = image.u32(image.opt + 56)
+    blob = bytearray(b"".join(descriptors))
+    new_descriptor_offset = len(blob)
+    blob += bytes(40)
+
+    name_rva = rva + len(blob)
+    blob += JOYSTICK_DLL_NAME + b"\0"
+    if len(blob) % 2:
+        blob += b"\0"
+    import_name_rva = rva + len(blob)
+    blob += b"\0\0" + JOYSTICK_IMPORT_NAME + b"\0"
+    blob += bytes(-len(blob) % 4)
+    original_thunk_rva = rva + len(blob)
+    blob += struct.pack("<II", import_name_rva, 0)
+    first_thunk_rva = rva + len(blob)
+    blob += struct.pack("<II", import_name_rva, 0)
+
+    struct.pack_into(
+        "<IIIII", blob, new_descriptor_offset,
+        original_thunk_rva, 0, 0, name_rva, first_thunk_rva)
+
+    image.add_section(b".fajoy", len(blob), rva, bytes(blob), 0xC0000040)
+    raw_size = len(blob) + (-len(blob) % FILE_ALIGNMENT)
+    struct.pack_into("<I", image.data, image.opt + 8,
+                     image.u32(image.opt + 8) + raw_size)
+    struct.pack_into("<II", image.data, image.opt + 96 + 8,
+                     rva, (len(descriptors) + 2) * 20)
+    verify_joystick_import(image)
+
+
 def patch(data: bytes) -> tuple[bytes, list[str]]:
     """Return the fully patched image and a list of the steps applied."""
     image = Image(data)
@@ -509,7 +629,8 @@ def patch(data: bytes) -> tuple[bytes, list[str]]:
         raise PatchError("unexpected PE section layout")
     extra = names[6:]
     if extra not in ([], [".fadirty"], [".fadirty", ".fahd"],
-                     [".fadirty", ".fahd", ".fafocus"]):
+                     [".fadirty", ".fahd", ".fafocus"],
+                     [".fadirty", ".fahd", ".fafocus", ".fajoy"]):
         raise PatchError(f"unexpected extra PE sections {extra}; "
                          "this is not a file produced by this patcher")
     if not extra:
@@ -581,13 +702,19 @@ def patch(data: bytes) -> tuple[bytes, list[str]]:
                      "WM_ACTIVATE recovery hook"):
         applied.append("hooked WM_ACTIVATE for focus-loss recovery")
 
+    if ".fajoy" not in extra:
+        add_joystick_import(image)
+        applied.append("added WinMM joystick remapping adapter import")
+    else:
+        verify_joystick_import(image)
+
     return bytes(image.data), applied
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Patch FA.EXE for Wine, focus-loss (alt-tab) recovery and "
-                    "720p/1080p video modes.")
+        description="Patch FA.EXE for Wine, joystick remapping, focus-loss "
+                    "(alt-tab) recovery and 720p/1080p video modes.")
     parser.add_argument(
         "executables", nargs="*", type=Path, default=None,
         help="executables to patch in place (default: FA.EXE beside this script)")
@@ -650,7 +777,8 @@ def main(argv: list[str] | None = None) -> int:
         target.write_bytes(patched)
         for step in applied:
             print(f"{target}: {step}")
-        print(f"{target}: patched (Wine + focus-loss recovery + 720p/1080p)")
+        print(f"{target}: patched (Wine + joystick remapping + focus-loss "
+              "recovery + 720p/1080p)")
 
     return status
 
