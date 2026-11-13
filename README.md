@@ -89,10 +89,14 @@ Open a Terminal in `~/Games/FA` and run:
 ./launch.sh
 ```
 
-The first launch patches the known Wine-incompatible instructions in
-`FA.EXE`, saves `FA.EXE.orig` if that backup does not already exist, creates
-or updates the local `.wine-prefix`, and starts the game. Leave the Terminal
-open while Wine starts. Keep the CD in the drive if the game asks for it.
+On first launch, the patcher verifies `FA.EXE` and applies the Wine
+compatibility, focus-loss recovery, and HD display patches. The game will have
+1280x720 and 1920x1080 choices under **Preferences > Screen resolution**;
+640x480 remains available. The patcher also fixes rendering at the HD
+resolutions. It saves `FA.EXE.orig` if that backup does not already exist and
+refuses to modify an unrecognized executable. The launcher then creates or
+updates the local `.wine-prefix` and starts the game. Leave the Terminal open
+while Wine starts. Keep the CD in the drive if the game asks for it.
 
 If Linux says **Permission denied**, run this once from `~/Games/FA`, then
 launch again:
@@ -139,7 +143,8 @@ CDs to your machine, you can skip running the installer:
    ./launch.sh
    ```
 
-On the first launch, the script patches `FA.EXE` (keeping the original as
+On the first launch, the script validates and patches `FA.EXE` for Wine,
+focus-loss recovery, and HD resolutions (keeping the original as
 `FA.EXE.orig`), creates the local `.wine-prefix`, and starts the game. If the
 game asks for the CD, insert it and make sure drive `D:` in this game's Wine
 configuration points to the mounted disc, as described above.

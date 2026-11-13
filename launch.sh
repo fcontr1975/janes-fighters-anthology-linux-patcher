@@ -30,7 +30,7 @@ for dependency in WAIL32.DLL CDRVDL32.DLL CDRVHF32.DLL msapi.dll; do
     fi
 done
 
-printf 'Applying Wine compatibility patches to FA.EXE...\n'
+printf 'Applying Wine, focus-loss and HD (720p/1080p) patches to FA.EXE...\n'
 python3 "$GAME_DIR/patch-fa.py" "$GAME_EXE"
 
 export WINEPREFIX
